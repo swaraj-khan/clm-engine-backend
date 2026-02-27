@@ -1,8 +1,20 @@
 from fastapi import APIRouter, Query, HTTPException
 from database import db
 from datetime import datetime, timedelta
+from bson import ObjectId
+import json
 
 router = APIRouter()
+
+def convert_objectid_to_str(obj):
+    if isinstance(obj, ObjectId):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {key: convert_objectid_to_str(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_objectid_to_str(item) for item in obj]
+    else:
+        return obj
 
 VALID_STAGES = {
     "DEPLOYED",
@@ -252,4 +264,82 @@ async def get_users_by_stage(
         "status": status,
         "count": total,
         "users": users,
+    }
+
+
+@router.get("/users/applied-all")
+async def get_all_users_who_applied(
+    limit: int = 50,
+    skip: int = 0,
+):
+
+    pipeline = [
+        {
+            "$group": {
+                "_id": "$userId",
+                "firstApplication": {"$first": "$$ROOT"}
+            }
+        },
+        {
+            "$replaceRoot": {
+                "newRoot": "$firstApplication"
+            }
+        },
+        {
+            "$project": {
+                "_id": 1,
+                "userId": 1,
+                "jobId": 1,
+                "jobSnapshot": {
+                    "location": "$jobSnapshot.location",
+                    "salary": "$jobSnapshot.salary",
+                    "company": "$jobSnapshot.company",
+                    "contact": "$jobSnapshot.contact",
+                    "jobRole": "$jobSnapshot.jobRole",
+                    "jobCategory": "$jobSnapshot.jobCategory",
+                    "_id": "$jobSnapshot._id",
+                    "userId": "$jobSnapshot.userId",
+                    "title": "$jobSnapshot.title",
+                    "description": "$jobSnapshot.description",
+                    "responsibilities": "$jobSnapshot.responsibilities",
+                    "type": "$jobSnapshot.type",
+                    "contractPeriod": "$jobSnapshot.contractPeriod",
+                    "isActive": "$jobSnapshot.isActive",
+                    "dateOfApplication": "$jobSnapshot.dateOfApplication",
+                    "dateOfExpiration": "$jobSnapshot.dateOfExpiration",
+                    "positions": "$jobSnapshot.positions",
+                    "positionFilled": "$jobSnapshot.positionFilled",
+                    "createdAt": "$jobSnapshot.createdAt",
+                    "updatedAt": "$jobSnapshot.updatedAt",
+                    "status": "$jobSnapshot.status",
+                },
+                "applicationStatus": 1,
+                "resume": 1,
+                "appliedAt": 1,
+                "lastStatusUpdate": 1,
+                "createdAt": 1,
+                "updatedAt": 1,
+            }
+        },
+        {
+            "$facet": {
+                "metadata": [{"$count": "total"}],
+                "data": [{"$skip": skip}, {"$limit": limit}],
+            }
+        },
+    ]
+
+    result = await db.appliedjobs.aggregate(pipeline).to_list(length=1)
+
+    if not result:
+        return {"count": 0, "applications": []}
+
+    total = result[0]["metadata"][0]["total"] if result[0]["metadata"] else 0
+    applications = result[0]["data"]
+
+    applications = [convert_objectid_to_str(app) for app in applications]
+
+    return {
+        "count": total,
+        "applications": applications,
     }
